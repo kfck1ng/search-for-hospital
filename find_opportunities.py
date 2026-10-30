@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
 """Щотижневий пошук можливостей для лікарні.
 
-Читає RSS/Atom-стрічки та пошукові запити Google News з config.json,
-лишає записи, що містять ключові слова про охорону здоров'я, пропускає вже
-бачені (seen.json) і пише digest.md. Якщо digest.md не порожній, workflow
-створює з нього Issue на GitHub, а GitHub надсилає лист.
+Джерела (усе задається в config.json):
+  feeds         RSS/Atom-стрічки сайтів
+  news_queries  пошукові запити Google News
+  pages         звичайні сторінки установ і донорів: скрипт шукає на них нові посилання
+  telegram      публічні Telegram-канали (читаються через t.me/s/<назва>)
 
-Лише стандартна бібліотека Python, нічого встановлювати не треба.
+Запис потрапляє в дайджест, лише якщо в ньому є І медична тема (topic),
+І ознака можливості (kind: грант, конкурс, навчання, обладнання тощо)
+і немає слів із exclude. Уже бачені записи (seen.json) пропускаються.
+Якщо digest.md не порожній, workflow створює з нього Issue на GitHub.
+
+Лише стандартна бібліотека Python.
 """
 import datetime as dt
 import email.utils
+import html
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 SEEN = os.path.join(HERE, "seen.json")
 DIGEST = os.path.join(HERE, "digest.md")
-UA = "Mozilla/5.0 (compatible; hospital-opportunities-bot/1.0)"
+UA = "Mozilla/5.0 (compatible; hospital-opportunities-bot/2.0)"
 
 
 def norm(text):
@@ -29,6 +38,10 @@ def norm(text):
     for ch in ("’", "ʼ", "`", "‘"):
         text = text.replace(ch, "'")
     return text
+
+
+def strip_tags(s):
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
 
 
 def local(tag):
@@ -59,33 +72,106 @@ def parse_date(value):
     return d
 
 
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read()
+
+
+# ---------- парсери джерел ----------
+
 def parse_feed(data):
-    """Повертає список {title, link, date, summary} з RSS 2.0 або Atom."""
+    """RSS 2.0 або Atom -> [{title, link, date, summary}]"""
     root = ET.fromstring(data)
     out = []
     for node in root.iter():
-        name = local(node.tag)
-        if name not in ("item", "entry"):
+        if local(node.tag) not in ("item", "entry"):
             continue
         link = child_text(node, "link")
-        if not link:  # Atom: <link href="..."/>
+        if not link:
             for ch in node:
                 if local(ch.tag) == "link" and ch.get("href"):
                     link = ch.get("href")
                     break
         out.append({
-            "title": child_text(node, "title"),
+            "title": strip_tags(child_text(node, "title")),
             "link": link,
             "date": parse_date(child_text(node, "pubDate", "published", "updated", "date")),
-            "summary": child_text(node, "description", "summary", "content", "encoded"),
+            "summary": strip_tags(child_text(node, "description", "summary", "content", "encoded")),
         })
     return out
 
 
-def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read()
+class LinkParser(HTMLParser):
+    def __init__(self, base):
+        super().__init__()
+        self.base, self.links, self._href, self._buf = base, [], None, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._href = dict(attrs).get("href")
+            self._buf = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._buf.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href is not None:
+            text = re.sub(r"\s+", " ", "".join(self._buf)).strip()
+            if text and not self._href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                self.links.append((urllib.parse.urljoin(self.base, self._href), text))
+            self._href = None
+
+
+def parse_page(data, url):
+    """Звичайна HTML-сторінка -> посилання з достатньо довгим текстом."""
+    p = LinkParser(url)
+    p.feed(data.decode("utf-8", "replace"))
+    seen, out = set(), []
+    for link, text in p.links:
+        if len(text) < 20 or link in seen:
+            continue
+        seen.add(link)
+        out.append({"title": text, "link": link, "date": None, "summary": ""})
+    return out
+
+
+def parse_telegram(data, channel):
+    """Публічний канал t.me/s/<назва> -> повідомлення."""
+    page = data.decode("utf-8", "replace")
+    out = []
+    for block in page.split("tgme_widget_message_wrap")[1:]:
+        m_link = re.search(r'class="tgme_widget_message_date"\s+href="([^"]+)"', block)
+        m_text = re.search(r'class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', block, re.S)
+        m_time = re.search(r'<time[^>]*datetime="([^"]+)"', block)
+        if not m_link or not m_text:
+            continue
+        text = strip_tags(m_text.group(1))
+        out.append({
+            "title": text[:140] + ("…" if len(text) > 140 else ""),
+            "link": html.unescape(m_link.group(1)),
+            "date": parse_date(m_time.group(1)) if m_time else None,
+            "summary": text,
+        })
+    return out
+
+
+# ---------- фільтр ----------
+
+def make_filter(cfg):
+    topic = [norm(k) for k in cfg.get("topic", [])]
+    kind = [norm(k) for k in cfg.get("kind", [])]
+    excl = [norm(k) for k in cfg.get("exclude", [])]
+
+    def ok(item):
+        text = norm(item["title"] + " " + item["summary"])
+        if topic and not any(k in text for k in topic):
+            return False
+        if kind and not any(k in text for k in kind):
+            return False
+        return not any(k in text for k in excl)
+    return ok
 
 
 def main():
@@ -98,21 +184,27 @@ def main():
         seen = []
     seen_set = set(seen)
 
-    include = [norm(k) for k in cfg.get("include", [])]
-    exclude = [norm(k) for k in cfg.get("exclude", [])]
+    ok = make_filter(cfg)
     max_age = dt.timedelta(days=int(cfg.get("max_age_days", 21)))
     now = dt.datetime.now(dt.timezone.utc)
 
-    feeds = [(f["name"], f["url"]) for f in cfg.get("feeds", [])]
+    sources = []  # (назва, url, парсер)
+    for f_ in cfg.get("feeds", []):
+        sources.append((f_["name"], f_["url"], parse_feed))
     for q in cfg.get("news_queries", []):
         url = "https://news.google.com/rss/search?" + urllib.parse.urlencode(
             {"q": q + " when:21d", "hl": "uk", "gl": "UA", "ceid": "UA:uk"})
-        feeds.append(("Google News: " + q, url))
+        sources.append(("Новини: " + q, url, parse_feed))
+    for p in cfg.get("pages", []):
+        sources.append((p["name"], p["url"], lambda d, u=p["url"]: parse_page(d, u)))
+    for ch in cfg.get("telegram", []):
+        ch = ch.lstrip("@")
+        sources.append(("Telegram: @" + ch, "https://t.me/s/" + ch, lambda d, c=ch: parse_telegram(d, c)))
 
     found, failed = [], []
-    for name, url in feeds:
+    for name, url, parser in sources:
         try:
-            items = parse_feed(fetch(url))
+            items = parser(fetch(url))
         except Exception as e:  # одна зламана стрічка не має зупиняти решту
             failed.append((name, str(e)[:120]))
             print("ПОМИЛКА", name, e, file=sys.stderr)
@@ -126,10 +218,7 @@ def main():
             seen.append(key)
             if it["date"] and now - it["date"] > max_age:
                 continue
-            text = norm(it["title"] + " " + it["summary"])
-            if include and not any(k in text for k in include):
-                continue
-            if any(k in text for k in exclude):
+            if not ok(it):
                 continue
             it["source"] = name
             found.append(it)
@@ -138,20 +227,22 @@ def main():
 
     lines = []
     if found:
-        lines.append("Нові записи, що підходять за ключовими словами (%d):\n" % len(found))
+        lines.append("Нові записи, що підходять (%d):\n" % len(found))
         for it in found:
             d = it["date"].strftime("%d.%m.%Y") if it["date"] else "дата невідома"
-            lines.append("- **[%s](%s)**  \n  %s · %s" % (it["title"] or "Без назви", it["link"], d, it["source"]))
-        lines.append("\nПеревіряйте дедлайн і умови на сторінці джерела. Цікаві записи додайте в трекер.")
+            snippet = it["summary"][:180] + ("…" if len(it["summary"]) > 180 else "") if it["summary"] and it["summary"] != it["title"] else ""
+            lines.append("- **[%s](%s)**  \n  %s · %s%s" % (
+                it["title"] or "Без назви", it["link"], d, it["source"], ("  \n  " + snippet) if snippet else ""))
+        lines.append("\nПеревіряйте дедлайн, умови й те, чи може ваш заклад бути заявником. Цікаві записи додайте в трекер.")
     if failed:
-        lines.append("\nНе вдалося прочитати стрічки:")
+        lines.append("\nНе вдалося прочитати джерела:")
         for name, err in failed:
             lines.append("- %s (%s)" % (name, err))
     with open(DIGEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
     with open(SEEN, "w", encoding="utf-8") as f:
-        json.dump(seen[-5000:], f, ensure_ascii=False, indent=0)
+        json.dump(seen[-8000:], f, ensure_ascii=False, indent=0)
     print("Знайдено:", len(found), "· збоїв:", len(failed))
 
 
