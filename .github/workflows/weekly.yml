@@ -1,0 +1,42 @@
+name: Пошук можливостей для лікарні
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Шукаємо нові записи
+        run: python find_opportunities.py
+
+      - name: Створюємо Issue з дайджестом
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -s digest.md ]; then
+            TITLE="Можливості для лікарні: $(date +%d.%m.%Y)"
+            gh issue create --title "$TITLE" --body-file digest.md --assignee "${{ github.repository_owner }}" \
+              || gh issue create --title "$TITLE" --body-file digest.md
+          else
+            echo "Нових записів немає."
+          fi
+
+      - name: Зберігаємо список вже побачених
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add seen.json
+          git diff --cached --quiet || (git commit -m "Оновлено список побачених записів" && git push)
