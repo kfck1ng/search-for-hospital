@@ -1,0 +1,71 @@
+name: Щоденний пошук можливостей для лікарні
+
+on:
+  schedule:
+    # GitHub рахує час за UTC і не знає про літній час. Тому є два запуски,
+    # а крок «Перевірка часу» пропускає той, що не припадає на 12:00 за Києвом.
+    - cron: "0 9 * * *"    # 12:00 за Києвом влітку (UTC+3)
+    - cron: "0 10 * * *"   # 12:00 за Києвом взимку (UTC+2)
+  workflow_dispatch:        # кнопка «Run workflow» для ручного запуску
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Перевірка часу
+        id: gate
+        run: |
+          HOUR=$(TZ=Europe/Kiev date +%H)
+          echo "Київська година: $HOUR"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$HOUR" != "12" ]; then
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "Не 12:00 за Києвом, пропускаємо цей запуск."
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v6
+        if: steps.gate.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Шукаємо нові записи
+        if: steps.gate.outputs.go == 'true'
+        run: python find_opportunities.py
+
+      - name: Надсилаємо лист (або створюємо Issue, якщо пошта не налаштована)
+        if: steps.gate.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_APP_PASSWORD: ${{ secrets.MAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: |
+          if [ -s digest.md ]; then
+            python send_email.py || {
+              TITLE="Можливості для лікарні: $(TZ=Europe/Kiev date +%d.%m.%Y)"
+              gh issue create --title "$TITLE" --body-file digest.md --assignee "${{ github.repository_owner }}" \
+                || gh issue create --title "$TITLE" --body-file digest.md
+            }
+          else
+            echo "Нових записів немає."
+          fi
+
+      - name: Зберігаємо історію й дашборд
+        if: steps.gate.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add seen.json docs
+          git diff --cached --quiet || (git commit -m "Оновлено дашборд і список побачених записів" && git push)
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Pages ще не увімкнено, пропускаємо."

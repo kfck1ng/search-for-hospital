@@ -12,9 +12,17 @@
     "гуманітарна допомога лікарням обладнання передали фонд",
     "фонд передав обладнання лікарні",
     "безкоштовне навчання для лікарів медсестер",
+    "безкоштовні курси майстер-клас для лікарів",
+    "стажування для українських лікарів за кордоном",
+    "Horizon Europe health call Ukraine hospital",
+    "Horizon Europe partner search hospital clinical",
+    "EU4Health call for proposals 2026",
+    "hospital seeks partner consortium Ukraine health project",
+    "twinning partnership hospitals Ukraine",
     "call for proposals health facilities Ukraine",
     "grant medical equipment hospitals Ukraine",
-    "training programme Ukrainian doctors nurses fellowship"
+    "free online course doctors nurses Ukraine masterclass",
+    "internship fellowship Ukrainian doctors hospital abroad"
   ],
 
   "pages": [
@@ -31,9 +39,12 @@
     "hospital", "health", "medical", "clinic", "doctor", "nurse", "physician"
   ],
   "kind": [
-    "грант", "конкурс", "заявк", "фінансув", "стипенді", "навчан", "курс", "тренінг", "стажуван", "програм",
-    "обладнан", "передал", "передав", "допомог", "підтримк", "гуманітарн",
-    "grant", "call for", "funding", "fellowship", "scholarship", "training", "equipment", "donat", "support", "apply"
+    "грант", "конкурс", "заявк", "фінансув", "стипенді", "навчан", "курс", "тренінг", "стажу",
+    "майстер", "вебінар", "партнер", "консорціум", "побратим", "горизонт",
+    "обладнан", "передал", "передав", "гуманітарн",
+    "grant", "call for", "funding", "fellowship", "scholarship", "training", "course", "masterclass", "master class",
+    "webinar", "internship", "partner", "consortium", "twinning", "expression of interest",
+    "horizon", "eu4health", "erasmus", "equipment", "donat"
   ],
   "exclude": [
     "вакансі", "vacancy", "hiring", "job opening", "реклам", "знижк"

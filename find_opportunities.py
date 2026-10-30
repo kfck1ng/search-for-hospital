@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Щотижневий пошук можливостей для лікарні.
+"""Щоденний пошук можливостей для лікарні.
 
 Джерела (усе задається в config.json):
   feeds         RSS/Atom-стрічки сайтів
@@ -7,10 +7,14 @@
   pages         звичайні сторінки установ і донорів: скрипт шукає на них нові посилання
   telegram      публічні Telegram-канали (читаються через t.me/s/<назва>)
 
-Запис потрапляє в дайджест, лише якщо в ньому є І медична тема (topic),
-І ознака можливості (kind: грант, конкурс, навчання, обладнання тощо)
+Запис потрапляє в результат, лише якщо в ньому є І медична тема (topic),
+І ознака можливості (kind: грант, конкурс, навчання, партнерство, обладнання тощо)
 і немає слів із exclude. Уже бачені записи (seen.json) пропускаються.
-Якщо digest.md не порожній, workflow створює з нього Issue на GitHub.
+
+Результати:
+  digest.md       текст листа (порожній, якщо нового немає)
+  docs/data.json  історія знахідок
+  docs/index.html дашборд (публікується через GitHub Pages)
 
 Лише стандартна бібліотека Python.
 """
@@ -26,11 +30,38 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
+import build_dashboard
+
+try:
+    from zoneinfo import ZoneInfo
+    KYIV = ZoneInfo("Europe/Kyiv")
+except Exception:  # старі системи без бази часових поясів
+    KYIV = dt.timezone(dt.timedelta(hours=2))
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 SEEN = os.path.join(HERE, "seen.json")
 DIGEST = os.path.join(HERE, "digest.md")
-UA = "Mozilla/5.0 (compatible; hospital-opportunities-bot/2.0)"
+DOCS = os.path.join(HERE, "docs")
+DATA = os.path.join(DOCS, "data.json")
+INDEX = os.path.join(DOCS, "index.html")
+UA = "Mozilla/5.0 (compatible; hospital-opportunities-bot/3.0)"
+
+CATEGORIES = {
+    "eu": "Horizon Europe та програми ЄС",
+    "partnership": "Партнерства й консорціуми",
+    "training": "Навчання, стажування, курси",
+    "grant": "Гранти й конкурси",
+    "aid": "Допомога організацій",
+    "other": "Інше",
+}
+CATEGORY_WORDS = [
+    ("eu", ["horizon", "eu4health", "erasmus", "горизонт європ", "eit health", "євросоюз", "european commission", "єврокомісі", "creative europe"]),
+    ("partnership", ["partner search", "partnership", "пошук партнер", "партнерств", "consortium", "консорціум", "twinning", "побратим", "expression of interest"]),
+    ("training", ["навчан", "курс", "тренінг", "майстер", "стажу", "internship", "fellowship", "masterclass", "master class", "course", "training", "webinar", "вебінар", "стипенд", "scholarship"]),
+    ("grant", ["грант", "конкурс", "call for", "funding", "фінансув", "grant", "заявк"]),
+    ("aid", ["передал", "передав", "гуманітарн", "donat", "humanitarian", "допомог"]),
+]
 
 
 def norm(text):
@@ -157,7 +188,7 @@ def parse_telegram(data, channel):
     return out
 
 
-# ---------- фільтр ----------
+# ---------- фільтр і категорії ----------
 
 def make_filter(cfg):
     topic = [norm(k) for k in cfg.get("topic", [])]
@@ -174,19 +205,35 @@ def make_filter(cfg):
     return ok
 
 
+def categorize(item):
+    text = norm(item["title"] + " " + item["summary"])
+    # слово має починатися з ключової основи (щоб «курс» не знаходився всередині «конкурс»)
+    for cat, words in CATEGORY_WORDS:
+        for w in words:
+            if re.search(r"(?<![а-яіїєґa-z0-9])" + re.escape(w), text):
+                return cat
+    return "other"
+
+
+def load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
 def main():
     with open(CONFIG, encoding="utf-8") as f:
         cfg = json.load(f)
-    try:
-        with open(SEEN, encoding="utf-8") as f:
-            seen = list(json.load(f))
-    except (OSError, ValueError):
-        seen = []
+    seen = list(load_json(SEEN, []))
     seen_set = set(seen)
 
     ok = make_filter(cfg)
     max_age = dt.timedelta(days=int(cfg.get("max_age_days", 21)))
     now = dt.datetime.now(dt.timezone.utc)
+    now_kyiv = now.astimezone(KYIV)
+    today = now_kyiv.date().isoformat()
 
     sources = []  # (назва, url, парсер)
     for f_ in cfg.get("feeds", []):
@@ -206,7 +253,7 @@ def main():
         try:
             items = parser(fetch(url))
         except Exception as e:  # одна зламана стрічка не має зупиняти решту
-            failed.append((name, str(e)[:120]))
+            failed.append({"name": name, "error": str(e)[:120]})
             print("ПОМИЛКА", name, e, file=sys.stderr)
             continue
         print("OK", name, len(items), "записів")
@@ -221,25 +268,46 @@ def main():
             if not ok(it):
                 continue
             it["source"] = name
+            it["category"] = categorize(it)
             found.append(it)
 
     found.sort(key=lambda i: i["date"] or now, reverse=True)
 
+    # --- лист ---
     lines = []
     if found:
         lines.append("Нові записи, що підходять (%d):\n" % len(found))
         for it in found:
             d = it["date"].strftime("%d.%m.%Y") if it["date"] else "дата невідома"
             snippet = it["summary"][:180] + ("…" if len(it["summary"]) > 180 else "") if it["summary"] and it["summary"] != it["title"] else ""
-            lines.append("- **[%s](%s)**  \n  %s · %s%s" % (
-                it["title"] or "Без назви", it["link"], d, it["source"], ("  \n  " + snippet) if snippet else ""))
-        lines.append("\nПеревіряйте дедлайн, умови й те, чи може ваш заклад бути заявником. Цікаві записи додайте в трекер.")
-    if failed:
-        lines.append("\nНе вдалося прочитати джерела:")
-        for name, err in failed:
-            lines.append("- %s (%s)" % (name, err))
+            lines.append("- **[%s](%s)**  \n  %s · %s · %s%s" % (
+                it["title"] or "Без назви", it["link"], CATEGORIES[it["category"]], d, it["source"], ("  \n  " + snippet) if snippet else ""))
+        lines.append("\nПеревіряйте дедлайн, умови й те, чи може ваш заклад бути заявником.")
     with open(DIGEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + ("\n" if lines else ""))
+
+    # --- історія й дашборд ---
+    data = load_json(DATA, {})
+    items = data.get("items", [])
+    for it in found:
+        items.append({
+            "title": it["title"], "link": it["link"], "source": it["source"], "category": it["category"],
+            "date": it["date"].date().isoformat() if it["date"] else "", "first_seen": today,
+            "snippet": it["summary"][:200] if it["summary"] and it["summary"] != it["title"] else "",
+        })
+    items.sort(key=lambda i: (i["first_seen"], i.get("date", "")), reverse=True)
+    data = {
+        "updated": now_kyiv.strftime("%d.%m.%Y %H:%M") + " за Києвом",
+        "today": today,
+        "categories": CATEGORIES,
+        "items": items[:1500],
+        "failed": failed,
+    }
+    os.makedirs(DOCS, exist_ok=True)
+    with open(DATA, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    with open(INDEX, "w", encoding="utf-8") as f:
+        f.write(build_dashboard.build(data))
 
     with open(SEEN, "w", encoding="utf-8") as f:
         json.dump(seen[-8000:], f, ensure_ascii=False, indent=0)
