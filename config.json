@@ -1,0 +1,20 @@
+{
+  "max_age_days": 21,
+  "feeds": [
+    { "name": "ГУРТ: гранти", "url": "https://www.gurt.org.ua/rss/section/grants/" },
+    { "name": "Громадський простір", "url": "https://www.prostir.ua/feed/" }
+  ],
+  "news_queries": [
+    "грант лікарня Україна",
+    "гранти охорона здоров'я конкурс заявки",
+    "grant hospital Ukraine call for proposals",
+    "навчання для медиків безкоштовний курс Україна"
+  ],
+  "include": [
+    "лікар", "медичн", "медик", "здоров'я", "госпіта", "клінік", "пацієнт", "медсестр",
+    "hospital", "health", "medical", "clinic"
+  ],
+  "exclude": [
+    "вакансі", "vacancy"
+  ]
+}
