@@ -9,37 +9,34 @@ TEMPLATE = r'''<!doctype html>
 <title>Можливості для лікарні: дашборд пошуку</title>
 <style>
 :root {
-  --bg: #F2F5F3; --surface: #FFFFFF; --surface-2: #EAF0ED; --ink: #12201D; --muted: #5B6E69; --line: #D6E0DC;
-  --accent: #0B6B5D; --accent-ink: #FFFFFF; --accent-soft: #D9EFE9; --new: #B3261E; --new-soft: #FBE4E1;
-  --c-eu: #2F5DA8; --c-partnership: #7A4FA3; --c-training: #9A5B12; --c-grant: #0B6B5D; --c-aid: #A23B72; --c-other: #6B6F7A;
+  --bg: #EEF3FB; --surface: #FFFFFF; --surface-2: #E4ECFA; --ink: #0F2347; --muted: #55698C; --line: #D3DDEF;
+  --accent: #1F4FBF; --accent-ink: #FFFFFF; --accent-soft: #DCE7FB; --new: #C62828; --new-soft: #FDE7E7;
+  --c-eu: #1F4FBF; --c-partnership: #4F8DF0; --c-training: #0E8FB5; --c-grant: #17306E; --c-aid: #86A9EC; --c-other: #8392B0;
   --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #0E1715; --surface: #15211E; --surface-2: #1C2B27; --ink: #E5EEEB; --muted: #8FA39E; --line: #263632;
-    --accent: #4FC3A8; --accent-ink: #08211B; --accent-soft: #17332D; --new: #FF8A80; --new-soft: #3A1E1C;
-    --c-eu: #86AEEF; --c-partnership: #C3A0E6; --c-training: #E5A25A; --c-grant: #4FC3A8; --c-aid: #E58BBA; --c-other: #A3A8B5; color-scheme: dark; }
-}
 * { box-sizing: border-box; }
+html { color-scheme: light; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.45; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; line-height: 1.15; }
 h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
-.top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; align-items: baseline; margin-bottom: 18px; }
-.upd { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; align-items: baseline; margin-bottom: 18px; background: var(--accent); color: #FFFFFF; padding: 18px 20px; border-radius: 10px; }
+.top h1 { color: #FFFFFF; }
+.upd { color: #DCE7FB; font-family: var(--mono); font-size: 13px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin-bottom: 18px; }
 .tile { padding: 14px 16px; border-right: 1px solid var(--line); min-width: 0; }
 .tile:last-child { border-right: 0; }
 .tile .k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .tile .v { margin-top: 4px; font-family: var(--mono); font-size: 26px; font-variant-numeric: tabular-nums; }
-.tile .v.hot { color: var(--new); }
+.tile .v.hot { color: var(--accent); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 18px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }
-.bar { display: grid; grid-template-columns: minmax(0, 150px) 1fr 36px; gap: 10px; align-items: center; padding: 4px 0; width: 100%; background: none; border: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.bar { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 28px; gap: 10px; align-items: center; padding: 4px 0; width: 100%; background: none; border: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
 .bar:hover .lbl { text-decoration: underline; }
-.bar .lbl { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .lbl { font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
 .bar .track { height: 10px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
-.bar .fill { height: 100%; background: var(--c); min-width: 2px; }
+.bar .fill { display: block; height: 100%; background: var(--c); min-width: 2px; }
 .bar .n { font-family: var(--mono); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
 .spark { width: 100%; height: 64px; display: block; }
 .spark rect { fill: var(--accent); }
